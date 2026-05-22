@@ -49,7 +49,21 @@ def _list_ec2(want, missing):
     Returns:
         list of (instance_id, instance_type, state, tags_dict) tuples
     """
-    raise NotImplementedError("TODO: implement _list_ec2 — see test_list.py for expected behavior")
+    ec2 = boto3.client("ec2")
+    paginator = ec2.get_paginator("describe_instances")
+    rows = []
+    for page in paginator.paginate():
+        for reservation in page["Reservations"]:
+            for inst in reservation["Instances"]:
+                tags = tags_to_dict(inst.get("Tags", []))
+                if tags_match(tags, want, missing):
+                    rows.append((
+                        inst["InstanceId"],
+                        inst["InstanceType"],
+                        inst["State"]["Name"],
+                        tags,
+                    ))
+    return rows
 
 
 def _list_rds(want, missing):
@@ -61,7 +75,23 @@ def _list_rds(want, missing):
     Returns:
         list of (db_id, db_class, db_status, tags_dict) tuples
     """
-    raise NotImplementedError("TODO: implement _list_rds")
+    rds = boto3.client("rds")
+    paginator = rds.get_paginator("describe_db_instances")
+    rows = []
+    for page in paginator.paginate():
+        for db in page["DBInstances"]:
+            tag_list = rds.list_tags_for_resource(
+                ResourceName=db["DBInstanceArn"]
+            )["TagList"]
+            tags = tags_to_dict(tag_list)
+            if tags_match(tags, want, missing):
+                rows.append((
+                    db["DBInstanceIdentifier"],
+                    db["DBInstanceClass"],
+                    db["DBInstanceStatus"],
+                    tags,
+                ))
+    return rows
 
 
 def _list_s3(want, missing):
@@ -73,7 +103,21 @@ def _list_s3(want, missing):
     Returns:
         list of (bucket_name, "bucket", "active", tags_dict) tuples
     """
-    raise NotImplementedError("TODO: implement _list_s3")
+    from botocore.exceptions import ClientError
+
+    s3 = boto3.client("s3")
+    buckets = s3.list_buckets().get("Buckets", [])
+    rows = []
+    for b in buckets:
+        name = b["Name"]
+        try:
+            tag_set = s3.get_bucket_tagging(Bucket=name)["TagSet"]
+        except ClientError:
+            tag_set = []
+        tags = tags_to_dict(tag_set)
+        if tags_match(tags, want, missing):
+            rows.append((name, "bucket", "active", tags))
+    return rows
 
 
 def _list_volume(want, missing):
@@ -83,7 +127,21 @@ def _list_volume(want, missing):
         list of (volume_id, "<type>-<size>GB", state, tags_dict) tuples
         e.g. ("vol-0abc", "gp2-100GB", "in-use", {"purpose": "practice"})
     """
-    raise NotImplementedError("TODO: implement _list_volume")
+    ec2 = boto3.client("ec2")
+    paginator = ec2.get_paginator("describe_volumes")
+    rows = []
+    for page in paginator.paginate():
+        for vol in page["Volumes"]:
+            tags = tags_to_dict(vol.get("Tags", []))
+            if tags_match(tags, want, missing):
+                type_size = f"{vol['VolumeType']}-{vol['Size']}GB"
+                rows.append((
+                    vol["VolumeId"],
+                    type_size,
+                    vol["State"],
+                    tags,
+                ))
+    return rows
 
 
 DISPATCH = {
@@ -108,4 +166,19 @@ def run(args):
         args.tag          — list[str], each "key=value"
         args.missing_tag  — list[str], each "key"
     """
-    raise NotImplementedError("TODO: implement run() — see module docstring")
+    want = [parse_kv(t) for t in (args.tag or [])]
+    missing = args.missing_tag or []
+    rows = DISPATCH[args.type](want, missing)
+
+    # Build header
+    resource_type = args.type.upper()
+    filters = " ".join(f"{k}={v}" for k, v in want)
+    if missing:
+        filters += (" " if filters else "") + "missing:" + ",".join(missing)
+    header = f"  {resource_type} {filters}".rstrip() + f" — {len(rows)} found:"
+    print(header)
+    print("  " + "-" * 78)
+
+    for rid, rtype, state, tags in rows:
+        tag_str = "  ".join(f"{k}={v}" for k, v in sorted(tags.items()))
+        print(f"    {rid:<30s} {rtype:<15s} {state:<15s} {tag_str}")
