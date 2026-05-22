@@ -278,7 +278,7 @@ Add a `REFLECTIONS.md` to your repo. Sample prompts:
 - [x] (stretch) `clean` green + `idle` + `migrate-gp3` all implemented
 - [x] `make test` final score: **25/25 passing**
 - [x] Replace `sample_output/*_example.txt` with real outputs from your account
-- [x] `REFLECTIONS.md` with 3 answers
+- [x] `REFLECTIONS.md` with 5 answers
 - [ ] At least 3 meaningful commits (init → first command working → final polish)
 - [x] Replace `g<N>` placeholders throughout README with G3
 - [x] Add Team section with member names
