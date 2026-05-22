@@ -49,23 +49,44 @@ from commands._common import parse_kv
 
 def _to_tags(set_args):
     """Convert ['k1=v1', 'k2=v2'] to [{'Key':'k1','Value':'v1'}, ...]."""
-    raise NotImplementedError("TODO: implement _to_tags using parse_kv")
+    return [{"Key": k, "Value": v} for k, v in (parse_kv(s) for s in set_args)]
 
 
 def _tag_ec2(rid, tags):
-    raise NotImplementedError("TODO: implement _tag_ec2 using create_tags")
+    ec2 = boto3.client("ec2")
+    ec2.create_tags(Resources=[rid], Tags=tags)
 
 
 def _tag_rds(rid, tags):
-    raise NotImplementedError("TODO: implement _tag_rds — remember to fetch ARN first")
+    rds = boto3.client("rds")
+    arn = rds.describe_db_instances(DBInstanceIdentifier=rid)[
+        "DBInstances"
+    ][0]["DBInstanceArn"]
+    rds.add_tags_to_resource(ResourceName=arn, Tags=tags)
 
 
 def _tag_s3(rid, tags):
-    raise NotImplementedError("TODO: implement _tag_s3 — MERGE with existing tags, don't replace")
+    from botocore.exceptions import ClientError
+
+    s3 = boto3.client("s3")
+    # Get existing tags — merge, don't replace
+    try:
+        existing = s3.get_bucket_tagging(Bucket=rid)["TagSet"]
+    except ClientError:
+        existing = []
+
+    # Build merged dict (new tags overwrite existing keys)
+    merged = {t["Key"]: t["Value"] for t in existing}
+    for t in tags:
+        merged[t["Key"]] = t["Value"]
+
+    tag_set = [{"Key": k, "Value": v} for k, v in merged.items()]
+    s3.put_bucket_tagging(Bucket=rid, Tagging={"TagSet": tag_set})
 
 
 def _tag_volume(rid, tags):
-    raise NotImplementedError("TODO: implement _tag_volume using create_tags")
+    ec2 = boto3.client("ec2")
+    ec2.create_tags(Resources=[rid], Tags=tags)
 
 
 DISPATCH = {
@@ -84,4 +105,14 @@ def run(args):
         args.id    — resource identifier
         args.set   — list[str], each "key=value"
     """
-    raise NotImplementedError("TODO: implement run() — see module docstring")
+    from botocore.exceptions import ClientError
+
+    tags = _to_tags(args.set)
+    try:
+        DISPATCH[args.type](args.id, tags)
+        tag_str = ", ".join(f"{t['Key']}={t['Value']}" for t in tags)
+        print(f"Applied {len(tags)} tag(s) to {args.type} {args.id}: {tag_str}")
+    except ClientError as e:
+        code = e.response["Error"]["Code"]
+        msg = e.response["Error"]["Message"]
+        print(f"AWS error [{code}]: {msg}")
